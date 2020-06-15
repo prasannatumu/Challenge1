@@ -2,7 +2,7 @@
 
 A three-tier architecture is a software architecture pattern where the application is broken down into three logical tiers: the presentation layer, the business logic layer and the data storage layer. This architecture is used in a client-server application such as a web application that has the frontend, the backend and the database. Web servers are present in front end, Secured data like code and data will be present as part of backend and database.
 
-In this challenge, I've used below AWS resources to build a three tier infrastructure.
+In this challenge, I've used AWS CloudFormation as Infrastructure as Code(IaC) to create a three tier infrastructure with below resources in AWS.
 
 Network:
 1) VPC for creating AWS resources in a private network and managing them in a secure and scalable manner.
