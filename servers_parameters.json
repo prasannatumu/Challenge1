@@ -1,0 +1,10 @@
+[
+    {
+        "ParameterKey": "EnvironmentName",
+        "ParameterValue": "KPMG_Challenge_One"
+    },
+    {
+        "ParameterKey": "MyIP",
+        "ParameterValue": "192.168.0.9/32"
+      }
+]

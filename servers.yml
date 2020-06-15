@@ -1,0 +1,175 @@
+Description: 
+    This is a CloufFormation script of servers, security groups and Roles that are required for building 3-tier architecture
+
+Parameters:
+    EnvironmentName:
+        Description: Name of the Environment
+        Type: String
+        Default: KPMG_Challenge_One
+    MyIP:
+        Description: Enter the IP address from which you want to access bastion host
+        Type: String
+
+Resources:
+    S3ReadOnly:
+        Type: AWS::IAM::Role
+        Properties:
+            RoleName: S3ReadOnly
+            Description: Read only access for EC2 Instances
+            AssumeRolePolicyDocument:
+              Statement:
+                - Effect: Allow
+                  Principal:
+                    Service:
+                    - ec2.amazonaws.com
+                  Action:
+                    - 'sts:AssumeRole'
+            Policies:
+              - PolicyName: S3ReadOnly
+                PolicyDocument:
+                  Statement:
+                    - Effect: Allow
+                      Action: 
+                      - 's3:Get*'
+                      - 's3:List*'
+                      Resource: 'arn:aws:s3:::uda-demo-1'
+    ProfileWithRolesForOurApp:
+      Type: AWS::IAM::InstanceProfile
+      Properties:
+        Roles: 
+            - !Ref S3ReadOnly
+
+    LBSecurityGroup:
+        Type: AWS::EC2::SecurityGroup
+        Properties:
+            GroupDescription: 
+              Load balancer should allow 
+              All public traffic (0.0.0.0/0) on port 80 inbound, which is the default HTTP port.
+              Outbound, it will only be using port 80 to reach the internal servers.
+            VpcId:
+              Fn::ImportValue:
+                  !Sub ${EnvironmentName}-VPCID
+            SecurityGroupIngress:
+            - IpProtocol: tcp
+              FromPort: 80
+              ToPort: 80
+              CidrIp: 0.0.0.0/0
+            SecurityGroupEgress:
+            - IpProtocol: tcp
+              FromPort: 80
+              ToPort: 80
+              CidrIp: 0.0.0.0/0
+    WSSecurityGroup:
+        Type: AWS::EC2::SecurityGroup
+        Properties:
+            GroupDescription:
+                Inbound Port, HTTP Port:80 must be open
+                Outbound, servers need to have unrestricted internet access
+            VpcId:
+                Fn::ImportValue:
+                    !Sub ${EnvironmentName}-VPCID
+            SecurityGroupIngress:
+            - IpProtocol: tcp
+              FromPort: 80
+              ToPort: 80
+              CidrIp: 0.0.0.0/0
+            SecurityGroupEgress:
+            - IpProtocol: tcp
+              FromPort: 0
+              ToPort: 65535
+              CidrIp: 0.0.0.0/0
+
+    BastionSecurityGroup:
+        Type: AWS::EC2::SecurityGroup
+        Properties:
+            GroupDescription:
+                SSH access
+            VpcId:
+                Fn::ImportValue:
+                    !Sub ${EnvironmentName}-VPCID
+            SecurityGroupIngress:
+            - IpProtocol: tcp
+              FromPort: 22
+              ToPort: 22
+              CidrIp: !Ref MyIP
+
+    LaunchConfig:
+        Type: AWS::AutoScaling::LaunchConfiguration
+        Properties:
+            UserData:
+                Fn::Base64: !Sub |
+                    #!/bin/bash -xe
+                    exec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
+                    apt update -y
+                    apt install -y apache2
+                    systemctl start apache2
+                    systemctl enable apache2
+                    rm ../../var/www/html/index.html
+                    wget -P ../../var/www/html https://uda-demo-1.s3-us-west-2.amazonaws.com/index.html
+            ImageId: ami-003634241a8fcdec0
+            SecurityGroups:
+            - Ref: WSSecurityGroup
+            InstanceType: t3a.medium
+            IamInstanceProfile: !Ref ProfileWithRolesForOurApp
+            BlockDeviceMappings:
+            - DeviceName: "/dev/sdk"
+              Ebs:
+                VolumeSize: '10'
+    AutoScalingGroup:
+        Type: AWS::AutoScaling::AutoScalingGroup
+        Properties:
+            VPCZoneIdentifier:
+            - Fn::ImportValue:
+                !Sub "${EnvironmentName}-PRIV-NETS"
+            LaunchConfigurationName:  
+              Ref: LaunchConfig
+            MinSize: '4'
+            MaxSize: '4'
+            TargetGroupARNs:
+            - Ref: TargetGroup
+    LoadBalancer:
+        Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+        Properties:
+            Subnets:
+            - Fn::ImportValue: !Sub "${EnvironmentName}-PUB1-SN"
+            - Fn::ImportValue: !Sub "${EnvironmentName}-PUB2-SN"
+            SecurityGroups:
+            - Ref: LBSecurityGroup
+    Listener:
+        Type: AWS::ElasticLoadBalancingV2::Listener
+        Properties:
+          DefaultActions:
+          - Type: forward
+            TargetGroupArn:
+              Ref: TargetGroup
+          LoadBalancerArn:
+            Ref: LoadBalancer
+          Port: '80'
+          Protocol: HTTP
+    ALBListenerRule:
+      Type: AWS::ElasticLoadBalancingV2::ListenerRule
+      Properties:
+        Actions:
+        - Type: forward
+          TargetGroupArn: !Ref 'TargetGroup'
+        Conditions:
+        - Field: path-pattern
+          Values: [/]
+        ListenerArn: !Ref 'Listener'
+        Priority: 1
+    TargetGroup:
+        Type: AWS::ElasticLoadBalancingV2::TargetGroup
+        Properties:
+          HealthCheckIntervalSeconds: 10
+          HealthCheckPath: /
+          HealthCheckProtocol: HTTP
+          HealthCheckTimeoutSeconds: 8
+          HealthyThresholdCount: 2
+          Port: 80
+          Protocol: HTTP
+          UnhealthyThresholdCount: 5
+          VpcId: 
+            Fn::ImportValue:
+              Fn::Sub: "${EnvironmentName}-VPCID"
+
+    
